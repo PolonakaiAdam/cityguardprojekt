@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>Cityguard</title>
   <link rel="stylesheet" href="assets/css/style.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 </head>
 <body>
   <header class="topbar">
@@ -58,14 +59,14 @@
         <input id="regEmail" placeholder="pl. valaki@email.hu" autocomplete="email" />
 
         <label>Jelszó (legalább 8 karakter)</label>
-        <input id="regPassword" type="password" placeholder="********" autocomplete="new-password" />
+        <input id="regPassword" type="password" placeholder="jelszó" autocomplete="new-password" />
 
-        <button id="btnRegister" class="btn btn-primary w100" type="button">Fiók létrehozása</button>
+        <button id="btnRegister" class="btn btn-primary w100" type="button">Regisztráció</button>
         <p id="regMsg" class="msg"></p>
 
         <div class="switch">
-          <span class="muted">Már van fiókod?</span>
-          <button id="toLogin" class="link-btn" type="button">Vissza a belépéshez</button>
+          <span class="muted">Van már fiókod?</span>
+          <button id="toLogin" class="link-btn" type="button">Belépek</button>
         </div>
       </section>
     </section>
@@ -94,18 +95,38 @@
       <label>Részletes leírás</label>
       <textarea id="reportDesc" rows="4" placeholder="Írd le röviden, mi a probléma, mióta tart, és miért sürgős."></textarea>
 
-      <div class="card" style="margin-top:12px; padding:12px;">
-        <b>GPS helyzet (kötelező)</b>
-        <p class="muted small" style="margin:6px 0 10px;">
-          A bejelentés elküldéséhez engedélyezni kell a helymeghatározást.
+      <div class="card" style="margin-top:16px; padding:16px;">
+        <b>Helymeghatározás (kötelező)</b>
+        <p class="muted small" style="margin:8px 0 12px;">
+          Válaszd ki, hogyan szeretnéd megadni a helyszínt:
         </p>
-        <div class="row">
-          <span id="gpsStatus" class="muted">Helymeghatározás: nincs megadva.</span>
-          <button id="btnGetGps" class="btn btn-soft" type="button">Helyzet meghatározása</button>
+
+        <div class="row" style="gap:16px; flex-wrap:wrap;">
+          <label style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
+            <input type="radio" name="locationMethod" value="gps" checked />
+            GPS – aktuális pozíció
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
+            <input type="radio" name="locationMethod" value="map" />
+            Térképen jelölés
+          </label>
+        </div>
+
+        <div id="gpsSection" style="margin-top:16px;">
+          <div class="row" style="align-items:center; gap:12px;">
+            <span id="gpsStatus" class="muted">Helymeghatározás: nincs megadva.</span>
+            <button id="btnGetGps" class="btn btn-soft" type="button">GPS lekérése</button>
+          </div>
+        </div>
+
+        <div id="mapSection" class="hidden" style="margin-top:16px;">
+          <div id="reportMap" style="height:320px; border-radius:12px; overflow:hidden; border:1px solid rgba(15,23,42,0.12);"></div>
+          <p class="muted small" style="margin:8px 0;">Kattints a térképre a pontos helyszín kijelöléséhez (a jelölő húzható)</p>
+          <span id="mapStatus" class="muted">Nincs helyszín kiválasztva.</span>
         </div>
       </div>
 
-      <button id="btnCreateReport" class="btn btn-primary" type="button">Bejelentés elküldése</button>
+      <button id="btnCreateReport" class="btn btn-primary w100" type="button" style="margin-top:20px;">Bejelentés elküldése</button>
       <p id="createMsg" class="msg"></p>
     </section>
 
@@ -129,6 +150,7 @@
     </section>
   </main>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="assets/js/app.js"></script>
 </body>
 </html>

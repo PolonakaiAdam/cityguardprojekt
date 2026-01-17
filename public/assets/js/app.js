@@ -30,7 +30,7 @@ async function api(path, method = "GET", body = null) {
 }
 
 function setText(el, text = "") {
-  el.textContent = text;
+  if (el) el.textContent = text || "";
 }
 
 function escapeHtml(s) {
@@ -68,20 +68,34 @@ function showAuthedUI(user) {
 
 let ME = null;
 
-/* ===== GPS (kötelező) ===== */
-let GPS = { lat: null, lng: null, acc: null };
+/* ===== HELY meghatározás (GPS vagy térkép) ===== */
+let LOCATION = { lat: null, lng: null, acc: null, method: "gps" };
 
-function updateGpsUI() {
-  const el = $("#gpsStatus");
-  if (!el) return;
+let reportMap = null;
+let reportMarker = null;
 
-  if (GPS.lat === null || GPS.lng === null) {
-    el.textContent = "Helymeghatározás: nincs megadva.";
+function updateLocationUI() {
+  const gpsEl = $("#gpsStatus");
+  const mapEl = $("#mapStatus");
+
+  if (!gpsEl || !mapEl) return;
+
+  if (LOCATION.lat === null || LOCATION.lng === null) {
+    setText(gpsEl, "Helymeghatározás: nincs megadva.");
+    setText(mapEl, "Nincs helyszín kiválasztva.");
     return;
   }
-  el.textContent = `Helymeghatározás OK: ${GPS.lat.toFixed(
-    5
-  )}, ${GPS.lng.toFixed(5)} (±${Math.round(GPS.acc)} m)`;
+
+  const coords = `${LOCATION.lat.toFixed(6)}, ${LOCATION.lng.toFixed(6)}`;
+  const accTxt = LOCATION.acc ? ` (±${Math.round(LOCATION.acc)} m)` : "";
+
+  if (LOCATION.method === "gps") {
+    setText(gpsEl, `GPS OK: ${coords}${accTxt}`);
+    setText(mapEl, "Nincs helyszín kiválasztva.");
+  } else {
+    setText(gpsEl, "Helymeghatározás: nincs megadva.");
+    setText(mapEl, `Térképen kijelölve: ${coords}`);
+  }
 }
 
 async function getGps() {
@@ -92,42 +106,79 @@ async function getGps() {
     return false;
   }
 
-  // iOS/Android sokszor csak user action után promptol — ezért csak gombnyomásra hívjuk.
   setText($("#gpsStatus"), "Helymeghatározás folyamatban…");
 
   return new Promise((resolve) => {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        GPS.lat = pos.coords.latitude;
-        GPS.lng = pos.coords.longitude;
-        GPS.acc = pos.coords.accuracy;
-        updateGpsUI();
+        LOCATION = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          acc: pos.coords.accuracy,
+          method: "gps",
+        };
+        updateLocationUI();
         resolve(true);
       },
       (err) => {
-        GPS.lat = null;
-        GPS.lng = null;
-        GPS.acc = null;
-        updateGpsUI();
+        LOCATION.lat = null;
+        LOCATION.lng = null;
+        LOCATION.acc = null;
+        updateLocationUI();
 
         let msg = "Nem sikerült meghatározni a helyzetet.";
-        if (err && err.code === 1)
-          msg =
-            "A helymeghatározás nincs engedélyezve. Engedélyezd a böngészőben, különben nem küldhető be bejelentés.";
-        if (err && err.code === 2)
-          msg = "A helyzet nem elérhető (GPS/jel). Próbáld újra.";
-        if (err && err.code === 3)
-          msg = "Időtúllépés a helymeghatározásnál. Próbáld újra.";
+        if (err.code === 1) msg = "A helymeghatározás nincs engedélyezve.";
+        if (err.code === 2) msg = "A helyzet jelenleg nem elérhető.";
+        if (err.code === 3) msg = "Időtúllépés a helymeghatározásnál.";
 
         setText($("#createMsg"), msg);
         resolve(false);
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
     );
   });
 }
 
-/* ===== kategóriák / listázás ===== */
+function initReportMap() {
+  if (reportMap) return;
+
+  reportMap = L.map("reportMap", {
+    zoomControl: true,
+  }).setView([47.4979, 19.0402], 13);
+
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution:
+      '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  }).addTo(reportMap);
+
+  reportMap.on("click", function (e) {
+    LOCATION = {
+      lat: e.latlng.lat,
+      lng: e.latlng.lng,
+      acc: null,
+      method: "map",
+    };
+
+    if (reportMarker) {
+      reportMarker.setLatLng(e.latlng);
+    } else {
+      reportMarker = L.marker(e.latlng, {
+        draggable: true,
+      }).addTo(reportMap);
+
+      reportMarker.on("dragend", function (ev) {
+        LOCATION.lat = ev.target.getLatLng().lat;
+        LOCATION.lng = ev.target.getLatLng().lng;
+        updateLocationUI();
+      });
+    }
+
+    updateLocationUI();
+  });
+}
+
+/* ===== kategóriák betöltése ===== */
 async function loadCategories() {
   const sel = $("#categorySelect");
   sel.innerHTML = "";
@@ -137,25 +188,36 @@ async function loadCategories() {
   ph.textContent = "— Válassz kategóriát —";
   sel.appendChild(ph);
 
-  const data = await api("categories_list.php");
-  if (!data.items || data.items.length === 0)
-    throw { error: "Nincs kategória az adatbázisban." };
+  try {
+    const data = await api("categories_list.php");
+    if (!data.items || data.items.length === 0) {
+      throw { error: "Nincs kategória az adatbázisban." };
+    }
 
-  data.items.forEach((c) => {
-    const opt = document.createElement("option");
-    opt.value = c.id;
-    opt.textContent = c.name;
-    sel.appendChild(opt);
-  });
+    data.items.forEach((c) => {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = c.name;
+      sel.appendChild(opt);
+    });
 
-  sel.value = String(data.items[0].id);
+    // Alapértelmezett kiválasztás (ha van legalább egy kategória)
+    if (data.items.length > 0) {
+      sel.value = data.items[0].id;
+    }
+  } catch (e) {
+    setText(
+      $("#createMsg"),
+      e.error || "Nem sikerült betölteni a kategóriákat.",
+    );
+  }
 }
 
 function canManage() {
   return ME && (ME.role === "admin" || ME.role === "staff");
 }
 
-/* ===== státusz állítás ===== */
+/* ===== státusz módosítás ===== */
 function addStatusControls(li, report) {
   if (!canManage()) return;
 
@@ -183,7 +245,7 @@ function addStatusControls(li, report) {
   const btn = document.createElement("button");
   btn.className = "btn btn-soft";
   btn.type = "button";
-  btn.textContent = "Állapot mentése";
+  btn.textContent = "Mentés";
 
   const msg = document.createElement("span");
   msg.className = "muted small";
@@ -195,10 +257,10 @@ function addStatusControls(li, report) {
         report_id: report.id,
         status: sel.value,
       });
-      msg.textContent = "Mentve.";
+      msg.textContent = "Mentve";
       await loadReports();
     } catch (e) {
-      msg.textContent = e.error || "Hiba.";
+      msg.textContent = e.error || "Hiba";
     }
   });
 
@@ -208,16 +270,17 @@ function addStatusControls(li, report) {
   li.appendChild(wrap);
 }
 
-/* ===== kommentek (admin/staff) ===== */
+/* ===== kommentek kezelése ===== */
 async function loadComments(reportId, container) {
   container.innerHTML = `<div class="muted small">Betöltés…</div>`;
   try {
     const data = await api(
-      `comments_list.php?report_id=${encodeURIComponent(reportId)}`
+      `comments_list.php?report_id=${encodeURIComponent(reportId)}`,
     );
     const items = data.items ?? [];
+
     if (items.length === 0) {
-      container.innerHTML = `<div class="muted small">Még nincs komment.</div>`;
+      container.innerHTML = `<div class="muted small">Még nincs komment</div>`;
       return;
     }
 
@@ -227,19 +290,15 @@ async function loadComments(reportId, container) {
       <div class="comment">
         <div class="comment-head">
           <b>${escapeHtml(c.author)}</b>
-          <span class="muted small">(${escapeHtml(
-            SZEREPKOR_HU[c.author_role] ?? c.author_role
-          )}) • ${escapeHtml(c.created_at)}</span>
+          <span class="muted small">(${escapeHtml(SZEREPKOR_HU[c.author_role] ?? c.author_role)}) • ${escapeHtml(c.created_at)}</span>
         </div>
         <div>${escapeHtml(c.comment)}</div>
       </div>
-    `
+    `,
       )
       .join("");
   } catch (e) {
-    container.innerHTML = `<div class="muted small">${escapeHtml(
-      e.error || "Hiba a kommentek betöltésekor."
-    )}</div>`;
+    container.innerHTML = `<div class="muted small">${escapeHtml(e.error || "Hiba a kommentek betöltésekor")}</div>`;
   }
 }
 
@@ -250,138 +309,213 @@ function addCommentControls(li, report) {
   box.className = "comment-box";
 
   box.innerHTML = `
-    <div class="row" style="margin-top:10px;">
-      <button class="btn btn-soft" type="button" data-action="toggleComments">Kommentek</button>
-      <button class="btn btn-soft" type="button" data-action="thanks">Köszönjük</button>
+    <div class="row" style="margin-top:12px; gap:10px;">
+      <button class="btn btn-soft" type="button" data-action="toggle">Kommentek mutatása</button>
+      <button class="btn btn-soft" type="button" data-action="thanks">Köszönő üzenet</button>
     </div>
 
-    <div class="hidden" data-comments>
-      <div style="margin-top:10px;" class="comment-list"></div>
+    <div class="hidden" data-comments-container style="margin-top:12px;">
+      <div class="comment-list"></div>
 
-      <label style="margin-top:10px;">Admin/Ügyintéző komment</label>
-      <textarea rows="3" placeholder="pl. Köszönjük a bejelentést! A hibát rögzítettük, hamarosan intézkedünk."></textarea>
+      <label style="margin:12px 0 6px; display:block;">Ügyintézői megjegyzés</label>
+      <textarea rows="3" placeholder="pl. Köszönjük a bejelentést! A hibát rögzítettük, tervezett javítás: ..."></textarea>
 
-      <div class="row">
-        <button class="btn btn-primary" type="button" data-action="sendComment">Komment elküldése</button>
+      <div class="row" style="margin-top:10px; gap:10px;">
+        <button class="btn btn-primary" type="button" data-action="send">Elküldés</button>
         <span class="muted small" data-msg></span>
       </div>
     </div>
   `;
 
-  const toggleBtn = box.querySelector('[data-action="toggleComments"]');
+  const toggleBtn = box.querySelector('[data-action="toggle"]');
   const thanksBtn = box.querySelector('[data-action="thanks"]');
-  const wrap = box.querySelector("[data-comments]");
+  const container = box.querySelector("[data-comments-container]");
   const list = box.querySelector(".comment-list");
-  const ta = box.querySelector("textarea");
-  const sendBtn = box.querySelector('[data-action="sendComment"]');
-  const msg = box.querySelector("[data-msg]");
+  const textarea = box.querySelector("textarea");
+  const sendBtn = box.querySelector('[data-action="send"]');
+  const msgEl = box.querySelector("[data-msg]");
 
   toggleBtn.addEventListener("click", async () => {
-    wrap.classList.toggle("hidden");
-    if (!wrap.classList.contains("hidden")) {
+    container.classList.toggle("hidden");
+    if (!container.classList.contains("hidden")) {
       await loadComments(report.id, list);
     }
   });
 
-  thanksBtn.addEventListener("click", async () => {
-    ta.value =
+  thanksBtn.addEventListener("click", () => {
+    textarea.value =
       "Köszönjük a bejelentést! A hibát rögzítettük, és hamarosan intézkedünk.";
-    wrap.classList.remove("hidden");
-    await loadComments(report.id, list);
-    ta.focus();
+    container.classList.remove("hidden");
+    textarea.focus();
   });
 
   sendBtn.addEventListener("click", async () => {
-    msg.textContent = "";
-    const comment = ta.value.trim();
+    const comment = textarea.value.trim();
     if (!comment) {
-      msg.textContent = "Írj be egy kommentet!";
+      msgEl.textContent = "Írj be egy megjegyzést!";
       return;
     }
 
+    msgEl.textContent = "";
     try {
       await api("comments_create.php", "POST", {
         report_id: report.id,
         comment,
       });
-      ta.value = "";
-      msg.textContent = "Elküldve.";
+      textarea.value = "";
+      msgEl.textContent = "Elküldve";
       await loadComments(report.id, list);
     } catch (e) {
-      msg.textContent = e.error || "Hiba.";
+      msgEl.textContent = e.error || "Hiba történt";
     }
   });
 
   li.appendChild(box);
 }
 
-/* ===== report list ===== */
+/* ===== Bejelentések lista ===== */
 async function loadReports() {
   const ul = $("#list");
   ul.innerHTML = "";
 
-  const status = $("#filterStatus").value;
+  const status = $("#filterStatus")?.value || "";
   const qs = status ? `?status=${encodeURIComponent(status)}` : "";
-  const data = await api(`reports_list.php${qs}`);
 
-  if (!data.items || data.items.length === 0) {
+  try {
+    const data = await api(`reports_list.php${qs}`);
+
+    if (!data.items || data.items.length === 0) {
+      const li = document.createElement("li");
+      li.textContent = "Nincs találat.";
+      ul.appendChild(li);
+      return;
+    }
+
+    data.items.forEach((r) => {
+      const li = document.createElement("li");
+      li.innerHTML = `
+        <div class="report-top">
+          <div><b>#${r.id}</b> <span class="chip chip--${r.status}">${statusHu(r.status)}</span></div>
+          <div class="muted small">${r.created_at}</div>
+        </div>
+        <div class="report-title">${escapeHtml(r.title)}</div>
+        <div class="muted">${escapeHtml(r.category)} • ${escapeHtml(r.address)}</div>
+        <div class="muted small">Beküldte: ${escapeHtml(r.created_by)}</div>
+      `;
+
+      addStatusControls(li, r);
+      addCommentControls(li, r);
+
+      ul.appendChild(li);
+    });
+  } catch (e) {
     const li = document.createElement("li");
-    li.textContent = "Nincs találat.";
+    li.textContent = "Hiba történt a bejelentések betöltésekor.";
     ul.appendChild(li);
-    return;
   }
-
-  data.items.forEach((r) => {
-    const li = document.createElement("li");
-    li.innerHTML = `
-      <div class="report-top">
-        <div><b>#${r.id}</b> <span class="chip chip--${escapeHtml(
-      r.status
-    )}">${escapeHtml(statusHu(r.status))}</span></div>
-        <div class="muted small">${escapeHtml(r.created_at)}</div>
-      </div>
-      <div class="report-title">${escapeHtml(r.title)}</div>
-      <div class="muted">${escapeHtml(r.category)} • ${escapeHtml(
-      r.address
-    )}</div>
-      <div class="muted small">Beküldte: ${escapeHtml(r.created_by)}</div>
-    `;
-
-    addStatusControls(li, r);
-    addCommentControls(li, r);
-
-    ul.appendChild(li);
-  });
 }
 
-/* ===== auth refresh ===== */
+/* ===== Auth refresh ===== */
 async function refreshMe() {
-  const data = await api("auth_me.php");
-  ME = data.user;
-  showAuthedUI(ME);
+  try {
+    const data = await api("auth_me.php");
+    ME = data.user;
+    showAuthedUI(ME);
 
-  if (ME) {
-    await loadCategories().catch((e) =>
-      setText(
-        $("#createMsg"),
-        e.error || "Nem sikerült betölteni a kategóriákat."
-      )
-    );
-    await loadReports().catch(() => {});
-    // FONTOS: itt NEM hívunk getGps()-t automatikusan, mert sok mobil csak user actionre promptol.
-    updateGpsUI();
+    if (ME) {
+      await loadCategories();
+      await loadReports();
+      updateLocationUI();
+    }
+  } catch (e) {
+    showAuthedUI(null);
   }
-
   return ME;
 }
 
-/* ===== EVENTS ===== */
-$("#toRegister").addEventListener("click", () => showAuthPanel("register"));
-$("#toLogin").addEventListener("click", () => showAuthPanel("login"));
+/* ===== Eseménykezelők ===== */
 
-$("#btnGetGps").addEventListener("click", getGps);
+// Helyszín módszer váltás
+document.querySelectorAll('input[name="locationMethod"]').forEach((radio) => {
+  radio.addEventListener("change", function () {
+    LOCATION.method = this.value;
 
-$("#btnLogin").addEventListener("click", async () => {
+    $("#gpsSection")?.classList.toggle("hidden", this.value !== "gps");
+    $("#mapSection")?.classList.toggle("hidden", this.value !== "map");
+
+    if (this.value === "map" && !reportMap) {
+      initReportMap();
+    }
+
+    updateLocationUI();
+  });
+});
+
+$("#btnGetGps")?.addEventListener("click", getGps);
+
+$("#btnCreateReport")?.addEventListener("click", async () => {
+  setText($("#createMsg"), "");
+
+  const categoryId = Number($("#categorySelect")?.value);
+  if (!categoryId) {
+    setText($("#createMsg"), "Válassz kategóriát!");
+    return;
+  }
+
+  const title = $("#reportTitle")?.value?.trim();
+  if (!title) {
+    setText($("#createMsg"), "Add meg a bejelentés címét!");
+    return;
+  }
+
+  if (LOCATION.lat === null || LOCATION.lng === null) {
+    setText(
+      $("#createMsg"),
+      "Kötelező helyszínt megadni (GPS vagy térképen jelölés)!",
+    );
+    return;
+  }
+
+  try {
+    const payload = {
+      category_id: categoryId,
+      address: $("#reportAddress")?.value?.trim() || "",
+      title: title,
+      description: $("#reportDesc")?.value?.trim() || "",
+      latitude: LOCATION.lat,
+      longitude: LOCATION.lng,
+    };
+
+    const res = await api("reports_create.php", "POST", payload);
+
+    setText(
+      $("#createMsg"),
+      `Sikeres beküldés! Bejelentés sorszáma: #${res.id}`,
+    );
+
+    // Reset űrlap
+    $("#reportTitle").value = "";
+    $("#reportDesc").value = "";
+    $("#reportAddress").value = "";
+    $("#categorySelect").value = "";
+
+    LOCATION = { lat: null, lng: null, acc: null, method: "gps" };
+    if (reportMarker) reportMarker.remove();
+    reportMarker = null;
+    if (reportMap) reportMap.setView([47.4979, 19.0402], 13);
+    updateLocationUI();
+
+    await loadReports();
+  } catch (e) {
+    setText($("#createMsg"), e.error || "Hiba történt a beküldés során");
+  }
+});
+
+// Auth események
+$("#toRegister")?.addEventListener("click", () => showAuthPanel("register"));
+$("#toLogin")?.addEventListener("click", () => showAuthPanel("login"));
+
+$("#btnLogin")?.addEventListener("click", async () => {
   setText($("#loginMsg"), "");
   try {
     await api("auth_login.php", "POST", {
@@ -391,11 +525,11 @@ $("#btnLogin").addEventListener("click", async () => {
     setText($("#loginMsg"), "Sikeres belépés!");
     await refreshMe();
   } catch (e) {
-    setText($("#loginMsg"), e.error || "Hiba történt.");
+    setText($("#loginMsg"), e.error || "Hibás email vagy jelszó");
   }
 });
 
-$("#btnRegister").addEventListener("click", async () => {
+$("#btnRegister")?.addEventListener("click", async () => {
   setText($("#regMsg"), "");
   try {
     await api("auth_register.php", "POST", {
@@ -409,65 +543,26 @@ $("#btnRegister").addEventListener("click", async () => {
     $("#loginPassword").value = "";
     $("#loginPassword").focus();
   } catch (e) {
-    setText($("#regMsg"), e.error || "Hiba történt.");
+    setText($("#regMsg"), e.error || "Hiba történt a regisztráció során");
   }
 });
 
-$("#btnLogout").addEventListener("click", async () => {
+$("#btnLogout")?.addEventListener("click", async () => {
   try {
     await api("auth_logout.php", "POST", {});
   } finally {
-    // GPS reset
-    GPS = { lat: null, lng: null, acc: null };
-    updateGpsUI();
+    LOCATION = { lat: null, lng: null, acc: null, method: "gps" };
+    updateLocationUI();
     await refreshMe();
   }
 });
 
-$("#btnCreateReport").addEventListener("click", async () => {
-  setText($("#createMsg"), "");
+$("#btnLoad")?.addEventListener("click", loadReports);
+$("#filterStatus")?.addEventListener("change", loadReports);
 
-  const categoryId = Number($("#categorySelect").value);
-  if (!categoryId) {
-    setText($("#createMsg"), "Válassz kategóriát!");
-    return;
-  }
-
-  // GPS kötelező + ha nincs, szóljunk és javasoljuk a gombot
-  if (GPS.lat === null || GPS.lng === null) {
-    setText(
-      $("#createMsg"),
-      "A GPS helyzet kötelező. Nyomd meg a „Helyzet meghatározása” gombot és engedélyezd a hozzáférést."
-    );
-    return;
-  }
-
-  try {
-    const payload = {
-      category_id: categoryId,
-      address: $("#reportAddress").value,
-      title: $("#reportTitle").value,
-      description: $("#reportDesc").value,
-      latitude: GPS.lat,
-      longitude: GPS.lng,
-    };
-
-    const res = await api("reports_create.php", "POST", payload);
-    setText($("#createMsg"), `Bejelentés elküldve! Azonosító: #${res.id}`);
-
-    $("#reportTitle").value = "";
-    $("#reportDesc").value = "";
-
-    await loadReports();
-  } catch (e) {
-    setText($("#createMsg"), e.error || "Hiba történt.");
-  }
+/* ===== Inicializálás ===== */
+document.addEventListener("DOMContentLoaded", () => {
+  showAuthPanel("login");
+  updateLocationUI();
+  refreshMe();
 });
-
-$("#btnLoad").addEventListener("click", loadReports);
-$("#filterStatus").addEventListener("change", loadReports);
-
-/* init */
-showAuthPanel("login");
-updateGpsUI();
-refreshMe();
