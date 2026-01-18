@@ -18,7 +18,7 @@
     </div>
 
     <div class="topbar-right">
-      <a class="btn btn-soft" href="map.php">Térkép</a>
+      <a class="btn btn-soft" href="map.php" style="color: white;">Térkép</a>
       <span id="me">Betöltés…</span>
       <button id="btnLogout" class="btn btn-ghost hidden" type="button">Kijelentkezés</button>
     </div>
@@ -101,14 +101,14 @@
           Válaszd ki, hogyan szeretnéd megadni a helyszínt:
         </p>
 
-        <div class="row" style="gap:16px; flex-wrap:wrap;">
-          <label style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
+        <div class="row" style="gap: 16px; flex-wrap: wrap; align-items: center;">
+          <label style="display: flex; align-items: center; gap: 8px; min-width: 0;">
             <input type="radio" name="locationMethod" value="gps" checked />
-            GPS – aktuális pozíció
+              GPS – aktuális pozíció
           </label>
-          <label style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
+          <label style="display: flex; align-items: center; gap: 8px; min-width: 0;">
             <input type="radio" name="locationMethod" value="map" />
-            Térképen jelölés
+              Térképen jelölés
           </label>
         </div>
 

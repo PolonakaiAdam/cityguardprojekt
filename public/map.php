@@ -19,7 +19,7 @@
     </div>
 
     <div class="topbar-right">
-      <a class="btn btn-soft" href="./">Bejelentések</a>
+      <a class="btn btn-soft" href="./" style="color: white;">Bejelentések</a>
       <span id="me">Betöltés…</span>
       <button id="btnLogout" class="btn btn-ghost hidden" type="button">Kijelentkezés</button>
     </div>
